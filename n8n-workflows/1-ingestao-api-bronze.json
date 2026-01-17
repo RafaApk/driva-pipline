@@ -1,0 +1,191 @@
+{
+  "name": "1 - Ingestão (API -> Bronze)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Início",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonData": "{{ { page: 1, total_pages: null, all_items: [] } }}"
+      },
+      "name": "Inicializar Paginação",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://api:3000/people/v1/enrichments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer driva_test_key_abc123xyz789"
+            }
+          ]
+        },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page",
+              "value": "={{ $json.page }}"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        }
+      },
+      "name": "HTTP Request - Buscar Página",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [550, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const currentItems = items[0].json.data || [];\nconst meta = items[0].json.meta || {};\nconst previousItems = items[0].json.all_items || [];\nconst allItems = [...previousItems, ...currentItems];\nconst totalPages = meta.total_pages || 1;\nconst currentPage = meta.page || 1;\n\nreturn [{\n  json: {\n    page: currentPage + 1,\n    total_pages: totalPages,\n    all_items: allItems,\n    should_continue: currentPage < totalPages\n  }\n}];"
+      },
+      "name": "Processar Resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "if (items[0].json.should_continue) {\n  return [{\n    json: {\n      page: items[0].json.page,\n      total_pages: items[0].json.total_pages,\n      all_items: items[0].json.all_items\n    }\n  }];\n} else {\n  return [{\n    json: {\n      items: items[0].json.all_items,\n      total_processado: items[0].json.all_items.length,\n      total_pages: items[0].json.total_pages\n    }\n  }];\n}"
+      },
+      "name": "Verifica Se Continua",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "const items_to_insert = items[0].json.items || [];\n\nreturn items_to_insert.map(item => {\n  return {\n    json: {\n      id_enriquecimento: item.id_enriquecimento || item.id,\n      id_workspace: item.id_workspace,\n      nome_workspace: item.nome_workspace || item.workspace_name,\n      total_contatos: item.total_contatos || item.total_contacts,\n      tipo_contato: item.tipo_contato || item.contact_type,\n      status_processamento: item.status_processamento || item.status,\n      data_criacao: item.data_criacao || item.created_at,\n      data_atualizacao: item.data_atualizacao || item.updated_at\n    }\n  };\n});"
+      },
+      "name": "Preparar Para Inserção",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "resource": "executeQuery",
+        "query": "INSERT INTO bronze_enriquecimentos \n(id_enriquecimento, id_workspace, nome_workspace, total_contatos, tipo_contato, status_processamento, data_criacao, data_atualizacao, dw_ingested_at, dw_updated_at)\nVALUES \n($1, $2, $3, $4, $5, $6, $7, $8, COALESCE((SELECT dw_ingested_at FROM bronze_enriquecimentos WHERE id_enriquecimento = $1), NOW()), NOW())\nON CONFLICT (id_enriquecimento) DO UPDATE SET\n  nome_workspace = EXCLUDED.nome_workspace,\n  total_contatos = EXCLUDED.total_contatos,\n  tipo_contato = EXCLUDED.tipo_contato,\n  status_processamento = EXCLUDED.status_processamento,\n  data_atualizacao = EXCLUDED.data_atualizacao,\n  dw_updated_at = NOW();",
+        "options": {}
+      },
+      "name": "Insert/Upsert Bronze",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1150, 300]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonData": "{{ { status: 'SUCESSO', total_registros_processados: items.length, timestamp_conclusao: new Date().toISOString() } }}"
+      },
+      "name": "Resultado Final",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1300, 300]
+    }
+  ],
+  "connections": {
+    "Início": {
+      "main": [
+        [
+          {
+            "node": "Inicializar Paginação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inicializar Paginação": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Buscar Página",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Buscar Página": {
+      "main": [
+        [
+          {
+            "node": "Processar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Resposta": {
+      "main": [
+        [
+          {
+            "node": "Verifica Se Continua",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifica Se Continua": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Buscar Página",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar Para Inserção",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Para Inserção": {
+      "main": [
+        [
+          {
+            "node": "Insert/Upsert Bronze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert/Upsert Bronze": {
+      "main": [
+        [
+          {
+            "node": "Resultado Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

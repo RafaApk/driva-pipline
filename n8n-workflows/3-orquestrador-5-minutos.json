@@ -1,0 +1,171 @@
+{
+  "name": "3 - Orquestrador (A cada 5 minutos)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "recurrenceType": "everyMinutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "name": "Trigger - 5 minutos",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonData": "{{ { timestamp_inicio: new Date().toISOString(), status: 'INICIADO' } }}"
+      },
+      "name": "Inicializar Contexto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": "{{ env.WORKFLOW_INGESTAO_ID || '0' }}",
+        "workflowIdType": "id"
+      },
+      "name": "Executar Workflow - Ingestão",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [550, 200]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Capturar resultado da ingestão\nconst ingestionResult = items[0].json;\n\nreturn [{\n  json: {\n    ingestao_status: ingestionResult.status || 'DESCONHECIDO',\n    ingestao_registros: ingestionResult.total_registros_processados || 0,\n    timestamp_ingestao: ingestionResult.timestamp_conclusao || new Date().toISOString()\n  }\n}];"
+      },
+      "name": "Processar Resultado Ingestão",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "workflowId": "{{ env.WORKFLOW_PROCESSAMENTO_ID || '0' }}",
+        "workflowIdType": "id"
+      },
+      "name": "Executar Workflow - Processamento",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Combinar resultados de ambos workflows\nconst processingResult = items[0].json;\nconst ingestionData = items[1].json;\n\nreturn [{\n  json: {\n    timestamp_inicio: items[1].json.timestamp_inicio || new Date().toISOString(),\n    ingestao: {\n      status: ingestionData.ingestao_status,\n      registros_processados: ingestionData.ingestao_registros\n    },\n    processamento: {\n      status: processingResult.status || 'DESCONHECIDO',\n      registros_gold: processingResult.quantidade_processada || 0\n    },\n    timestamp_fim: new Date().toISOString()\n  }\n}];"
+      },
+      "name": "Compilar Resultados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "resource": "executeQuery",
+        "query": "INSERT INTO workflow_logs \n(workflow_name, status, timestamp_inicio, timestamp_fim, quantidade_processada, quantidade_erros, detalhes)\nVALUES \n('ORQUESTRADOR_5MIN', $1, $2, $3, $4, 0, $5);",
+        "options": {}
+      },
+      "name": "Registrar Log no Banco",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1150, 200]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonData": "{{ { status: 'ORQUESTRAÇÃO_COMPLETA_COM_SUCESSO', ingestao_registros: $json.ingestao.registros_processados, processamento_registros: $json.processamento.registros_gold, duracao_segundos: (new Date($json.timestamp_fim) - new Date($json.timestamp_inicio)) / 1000, timestamp_conclusao: $json.timestamp_fim } }}"
+      },
+      "name": "Resultado Final",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1300, 200]
+    }
+  ],
+  "connections": {
+    "Trigger - 5 minutos": {
+      "main": [
+        [
+          {
+            "node": "Inicializar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inicializar Contexto": {
+      "main": [
+        [
+          {
+            "node": "Executar Workflow - Ingestão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar Workflow - Ingestão": {
+      "main": [
+        [
+          {
+            "node": "Processar Resultado Ingestão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Resultado Ingestão": {
+      "main": [
+        [
+          {
+            "node": "Executar Workflow - Processamento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar Workflow - Processamento": {
+      "main": [
+        [
+          {
+            "node": "Compilar Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compilar Resultados": {
+      "main": [
+        [
+          {
+            "node": "Registrar Log no Banco",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar Log no Banco": {
+      "main": [
+        [
+          {
+            "node": "Resultado Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

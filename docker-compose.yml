@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:14
+    container_name: driva-postgres
+    environment:
+      POSTGRES_USER: driva_user
+      POSTGRES_PASSWORD: driva_password_secure
+      POSTGRES_DB: driva_warehouse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - driva-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U driva_user -d driva_warehouse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: driva-n8n
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=driva_warehouse
+      - DB_POSTGRESDB_USER=driva_user
+      - DB_POSTGRESDB_PASSWORD=driva_password_secure
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - TZ=America/Sao_Paulo
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - driva-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: driva-api
+    environment:
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: driva_user
+      DB_PASSWORD: driva_password_secure
+      DB_NAME: driva_warehouse
+      API_KEY: driva_test_key_abc123xyz789
+      API_PORT: 3000
+    ports:
+      - "3000:3000"
+    networks:
+      - driva-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+      - /app/node_modules
+
+  frontend:
+    image: node:18-slim
+    container_name: driva-frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      - VITE_API_URL=http://localhost:3000
+    ports:
+      - "5173:5173"
+    networks:
+      - driva-network
+    depends_on:
+      - api
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  driva-network:
+    driver: bridge

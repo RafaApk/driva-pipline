@@ -1,0 +1,79 @@
+{
+  "name": "2 - Processamento (Bronze -> Gold)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Início",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "executeQuery",
+        "query": "SELECT \n  id_enriquecimento,\n  id_workspace,\n  nome_workspace,\n  total_contatos,\n  tipo_contato,\n  status_processamento,\n  data_criacao,\n  data_atualizacao,\n  ROUND(EXTRACT(EPOCH FROM (data_atualizacao - data_criacao))::NUMERIC / 60, 2) as \"Duração (min)\",\n  CASE \n    WHEN total_contatos > 0 THEN ROUND((EXTRACT(EPOCH FROM (data_atualizacao - data_criacao))::NUMERIC / 60) / total_contatos, 4)\n    ELSE 0\n  END as \"Tempo por Contato (min)\",\n  CASE\n    WHEN total_contatos < 100 THEN 'PEQUENO'\n    WHEN total_contatos >= 100 AND total_contatos <= 500 THEN 'MEDIO'\n    WHEN total_contatos > 500 AND total_contatos <= 1000 THEN 'GRANDE'\n    WHEN total_contatos > 1000 THEN 'MUITO_GRANDE'\n  END as \"Categoria\"\nFROM bronze_enriquecimentos \nORDER BY dw_updated_at DESC \nLIMIT 1000;",
+        "options": {}
+      },
+      "name": "Ler Bronze",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "resource": "executeQuery",
+        "query": "INSERT INTO gold_enriquecimentos \n(id_enriquecimento, id_workspace, nome_workspace, total_contatos, tipo_contato, status_processamento, data_criacao, data_atualizacao, duracao_processamento_minutos, tempo_por_contato_minutos, processamento_sucesso, categoria_tamanho_job, necessita_reprocessamento, data_atualizacao_dw)\nSELECT \n  b.id_enriquecimento,\n  b.id_workspace,\n  b.nome_workspace,\n  b.total_contatos,\n  CASE \n    WHEN b.tipo_contato = 'PERSON' THEN 'PESSOA'\n    WHEN b.tipo_contato = 'COMPANY' THEN 'EMPRESA'\n    ELSE b.tipo_contato\n  END,\n  CASE \n    WHEN b.status_processamento = 'PROCESSING' THEN 'EM_PROCESSAMENTO'\n    WHEN b.status_processamento = 'COMPLETED' THEN 'CONCLUIDO'\n    WHEN b.status_processamento = 'FAILED' THEN 'FALHOU'\n    WHEN b.status_processamento = 'CANCELED' THEN 'CANCELADO'\n    ELSE b.status_processamento\n  END,\n  b.data_criacao,\n  b.data_atualizacao,\n  ROUND(EXTRACT(EPOCH FROM (b.data_atualizacao - b.data_criacao))::NUMERIC / 60, 2),\n  CASE \n    WHEN b.total_contatos > 0 THEN ROUND((EXTRACT(EPOCH FROM (b.data_atualizacao - b.data_criacao))::NUMERIC / 60) / b.total_contatos, 4)\n    ELSE 0\n  END,\n  b.status_processamento = 'COMPLETED',\n  CASE \n    WHEN b.total_contatos < 100 THEN 'PEQUENO'\n    WHEN b.total_contatos >= 100 AND b.total_contatos <= 500 THEN 'MEDIO'\n    WHEN b.total_contatos > 500 AND b.total_contatos <= 1000 THEN 'GRANDE'\n    WHEN b.total_contatos > 1000 THEN 'MUITO_GRANDE'\n  END,\n  b.status_processamento IN ('FAILED', 'CANCELED'),\n  NOW()\nFROM bronze_enriquecimentos b\nLEFT JOIN gold_enriquecimentos g ON b.id_enriquecimento = g.id_enriquecimento\nWHERE g.id_enriquecimento IS NULL OR b.dw_updated_at > g.data_atualizacao_dw\nON CONFLICT (id_enriquecimento) DO UPDATE SET \n  total_contatos = EXCLUDED.total_contatos,\n  tipo_contato = EXCLUDED.tipo_contato,\n  status_processamento = EXCLUDED.status_processamento,\n  data_criacao = EXCLUDED.data_criacao,\n  data_atualizacao = EXCLUDED.data_atualizacao,\n  duracao_processamento_minutos = EXCLUDED.duracao_processamento_minutos,\n  tempo_por_contato_minutos = EXCLUDED.tempo_por_contato_minutos,\n  processamento_sucesso = EXCLUDED.processamento_sucesso,\n  categoria_tamanho_job = EXCLUDED.categoria_tamanho_job,\n  necessita_reprocessamento = EXCLUDED.necessita_reprocessamento,\n  data_atualizacao_dw = NOW();",
+        "options": {}
+      },
+      "name": "Upsert Gold",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonData": "{{ { status: 'SUCESSO', quantidade_processada: $nodeExecutionContext.getNode('Ler Bronze').data.executionData.resultData.context.count } }}"
+      },
+      "name": "Resultado",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "Início": {
+      "main": [
+        [
+          {
+            "node": "Ler Bronze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Bronze": {
+      "main": [
+        [
+          {
+            "node": "Upsert Gold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Gold": {
+      "main": [
+        [
+          {
+            "node": "Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
