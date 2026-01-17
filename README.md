@@ -29,6 +29,8 @@ docker run -d --name driva-ingestion \
   driva-ingestion
 ```
 
+docker-compose up -d
+
 ## O que faz
 
 1. **Fetch API** → Busca 100 registros de `/people/v1/enrichments`
@@ -66,7 +68,6 @@ Iniciando ingestão automática...
    Próxima iteração em 300s...
 ```
 
-docker-compose up -d
 
 ##  Troubleshooting
 
